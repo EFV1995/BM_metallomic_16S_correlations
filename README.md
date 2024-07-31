@@ -1,22 +1,31 @@
 # BM_metallomic_16S_heatmap correlations
-This repository contains the script utilized to perform the heatmap with metal and metalloids and microbiota abundances including diversity indices.
+# This repository contains the script utilized to perform the heatmap with metal and metalloids and microbiota abundances including diversity indices.
+
+# Load required libraries
 library(dplyr)
 library(tibble)
+library(forcats)
+library(ComplexHeatmap)
+library(ggplot2)
 
-# Cleaning
-more_data$Código_Familia <- NULL
-infant_genus$Group <- NULL
-infant_genus$Origen <- NULL
-infant_genus$Muestra <- NULL
-microbiota
-#changing names
-microbiota <- infant_genus
-metals <- BM_minerals
-z <- more_data
-microbiota <- column_to_rownames(microbiota, "Sample")
-microbiota$time <- NULL
+# Data frames are split_data_frames$File_3_micro$early and split_data_frames$File_2_mineral$early
+microbiota <- x1
+dim(x1)
+Diversities <- Infant_apha_diversities
+metals <- File_2_mineral
+head(File_3_micro)
+head(Infant_apha_diversities)
+head(File_2_mineral)
+
+# Cleaning data
+microbiota$Others <- NULL
+metals$cluster_time_interaction <- NULL
+Diversities$time <- NULL
+Diversities <- column_to_rownames(Diversities, var = "Sample")
+
 # Select only numeric variables from microbiota
-numeric_microbiota <- microbiota %>% select_if(is.numeric)
+numeric_microbiota <- x1 %>% select_if(is.numeric)
+dim(numeric_microbiota)
 
 # Set up environmental variables (metals)
 sel_env <- c("Al", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn", "As", "Mo", "Cd", "Sb", "Tl", "Pb")
@@ -40,83 +49,67 @@ sel_env_label <- list(
 
 # Transpose microbiota data (optional)
 microbiota <- t(microbiota)
+dim(microbiota)
 
 # Filter out samples with fewer counts (optional)
-microbiota <- microbiota[rowSums(numeric_microbiota) > 0, ]
+x <- microbiota[rowSums(microbiota) > 0, ]
+dim(x)
 
 # Apply normalization (log-relative transformation)
-# Apply the log transformation (choose normalization)
-x <- log((numeric_microbiota + 1) / (rowSums(numeric_microbiota) + ncol(numeric_microbiota)))
+x <- log((x + 1) / (rowSums(x) + ncol(x)))
+dim(x)
 
-install.packages("compositions") #package for CLR normalization
-library(compositions)
-
-x <- clr(microbiota)
 # Order columns based on colSums (optional)
 x <- x[, order(colSums(x), decreasing = TRUE)]
+dim(x)
 
 # Extract top N taxa (optional)
-N <- 10  # You can change this to your desired number
+N <- 20  # You can change this to your desired number
 taxa_list <- colnames(x)[1:N]
 taxa_list <- taxa_list[!grepl("Unknown", taxa_list)]  # Remove "__Unknown__"
+taxa_list <- taxa_list[!grepl("Ralstonia", taxa_list)]  # Remove "__Unknown__"
+taxa_list <- taxa_list[!grepl("Allorhizobium-Neorhizobium-Pararhizobium-Rhizobium", taxa_list)]  # Remove "__Unknown__"
 N <- length(taxa_list)
-x <- data.frame(x[, colnames(x) %in% taxa_list])
 
-# Change names to x and y
-x <- Infant_div #microbiota or diversities
+x <- x[, colnames(x) %in% taxa_list]
 dim(x)
-x$time <- NULL
+
+# Prepare data for correlation analysis
+x <- x
 y <- metals
 
-dim(x)
-dim(y)
-dim(z)
-#make sure both dataframes have same length (optinal)
-#before merging make sure that Sample is in columns
-x <- rownames_to_column(x,"Sample")
+# Set rownames as a column name for the microbiota
+x$Sample <- rownames_to_column(x, var="Sample")
+head(x)
 
-XY <- merge(x, y, by = "Sample", all = TRUE)
-XYZ <- merge(XY, z, by = "Sample", all = TRUE)
-
+# Merge dataframes
+XY <- merge(x, y, by = "row.names", all = TRUE)
+XY <- cbind(x, y)
 dim(XY)
-dim(XYZ)
-head(XY)
-head(XYZ)
-table(XYZ$time.x)
-#remove Nas (optional)
-XYZ <- na.omit(XYZ)
 
-# Print the result
-print(XYZ)
-view(XYZ)
-XY
-# Assuming 'Row.names' is the common column after merging
-x <- XYZ[, c(1:8)]  # Select columns corresponding to the 'x' data frame
-y <- XYZ[, c(1, 9:24)]  # Select columns corresponding to the 'y' data frame
-z <- XYZ[, c(1,9,25:28)] #sample data for adjusting p-values for spearman test
+# Remove NAs (optional)
+XY <- na.omit(XY)
+dim(XY)
 
-dim(x)
-str(x)
-str(y)
-str(z)
-view(y)
-view(x)
-view(z)
+# Split data into x and y
+x <- XY[, c(1, 2:9)]  # Select columns corresponding to the 'x' data frame
+y <- XY[, c(10, 11:24)]  # Select columns corresponding to the 'y' data frame
+
 # Grouping information
-groups <- z$time.y  # Use "Time" variable for grouping
-length(groups)
+groups <- XY$time  # Use "Time" variable for grouping
 
 # Both must be numeric data frames
 x <- x %>% select_if(is.numeric)
 y <- y %>% select_if(is.numeric)
 
-#check dimension of grouping variable, X, and, Y
+x <- as.data.frame(x)
+y <- as.data.frame(y)
 
-# Choose correlation method
 # Choose correlation method
 method <- "spearman"
 
-df <- NULL
+# Initialize an empty list to store the results
+results_list <- list()
 
 for (i in colnames(x)) {
   for (j in colnames(y)) {
@@ -125,157 +118,66 @@ for (i in colnames(x)) {
       b <- as.numeric(y[groups == k, j])
       
       if (!any(is.na(a)) && !any(is.na(b)) && length(a) > 0 && length(b) > 0) {
-        # Calculate correlation coefficient and p-value
-        cor_coef <- cor(a, b, use = "everything", method = method)
-        p_value <- cor.test(a, b, method = method)$p.value
+        tmp <- data.frame(
+          Taxa = i,
+          Metals = j,
+          Correlation = cor(a, b, use = "everything", method = method),
+          Pvalue = cor.test(a, b, method = method)$p.value,
+          Time = k,
+          stringsAsFactors = FALSE
+        )
         
-        # Apply Fisher transformation
-        fisher_transform <- 0.5 * log((1 + cor_coef) / (1 - cor_coef))
-        
-        # Create a data frame with results
-        tmp <- data.frame(Variable1 = i,
-                          Variable2 = j,
-                          Correlation = cor_coef,
-                          P_Value = p_value,
-                          Group = k,
-                          Fisher_Transform = fisher_transform)
-        
-        if (is.null(df)) {
-          df <- tmp
-        } else {
-          df <- rbind(df, tmp)
-        }
+        # Append to the results list
+        results_list <- append(results_list, list(tmp))
       }
     }
   }
 }
 
-# Print the resulting data frame
-print(df)
+# Combine all results into a single data frame
+df <- do.call(rbind, results_list)
 
-warnings()
-# Create a data frame
-df <- data.frame(row.names = NULL, df)
-colnames(df) <- c("Taxa", "Metals", "Correlation", "Pvalue", "Time","Fisher_tranform")
-df$Pvalue <- as.numeric(as.character(df$Pvalue))
-df$AdjPvalue <- rep(0, dim(df)[1])
-df$Correlation <- as.numeric(as.character(df$Correlation))
-
+# Convert necessary columns to numeric
+df$Pvalue <- as.numeric(df$Pvalue)
+df$Correlation <- as.numeric(df$Correlation)
 
 # Adjust p-values for multiple comparisons
-# Use appropriate adjustment method based on your preference
-# 1 -> don't adjust
-# 2 -> adjust Metals + Type
-# 3 -> adjust Taxa + Type
-# 4 -> adjust Taxa, Sex, Parto, and Tiempo_de_lactancia
-# 5 -> adjust Metals, Sex, Parto, and Tiempo_de_lactancia
-adjustment <- 4
-
-if (adjustment %in% c(4, 5)) {
-  # Additional adjustments for external variables (Sex, Parto, Lactancia)
-  for (k in unique(z$Sex)) {
-    for (l in unique(z$Parto))
-        sel <- z$Sex == k & z$Parto == l
-        df$AdjPvalue[sel] <- p.adjust(df$Pvalue[sel], method = "BH")
-      }
-    }
-df
-
-#adjust only for delivery/parto (optional)
-adjustment <- 4
-
-if (adjustment %in% c(4, 5)) {
-  # Additional adjustments for external variable (Parto)
-  for (l in unique(z$Parto)) {
-    sel <- z$Parto == l
-    df$AdjPvalue[sel] <- p.adjust(df$Pvalue[sel], method = "BH")
-  }
-}
+df$AdjPvalue <- p.adjust(df$Pvalue, method = "BH")
 
 # Generate labels for significant values
-df$Significance <- cut(df$AdjPvalue, breaks = c(-Inf, 0.001, 0.01, 0.05, Inf), label = c("***", "**", "*", ""))
+df$Significance <- cut(df$Pvalue, breaks = c(-Inf, 0.001, 0.01, 0.05, Inf), labels = c("***", "**", "*", ""))
 
-# Remove NAs
-df <- df[complete.cases(df), ]
-dim(df)
-head(df)
-# Reorganize Metals data based on appearance (optional)
-df$Metals <- factor(df$Metals, as.character(df$Metals))
-----
-#Reorganize Metals data based on concentrations in milk
-# Calculate average concentrations for each metal
-num_metal <- metals
-num_metal$time <- NULL
-num_metal$Sample <- NULL
-average_concentrations <- colMeans(num_metal)
-average_concentrations
-# Order Metals based on average concentrations
+# Display the final data frame
+print(df)
+
+# Reorganize Metals and bacteria data based on concentrations and abundances
+average_concentrations <- colMeans(metals)
 ordered_metals <- names(average_concentrations)[order(-average_concentrations)]
-
-# Reorganize Metals data based on the new order
 df$Metals <- factor(df$Metals, levels = ordered_metals)
 
-----
-  #Reorganize bacteria data based on abundances on infant feaces
-  # Calculate average abundances for each bacteria
+average_abundances <- colMeans(microbiota)
+ordered_bacteria <- names(average_abundances)[order(average_abundances)]
+df$Taxa <- factor(df$Taxa, levels = ordered_bacteria)
 
-average_concentrations <- colMeans(x)
-average_concentrations
-# Order taxa based on average concentrations
-ordered_metals <- names(average_concentrations)[order(average_concentrations)]
----
-
-# Reorganize bacteria data based on the new order
-df$Taxa <- factor(df$Taxa, levels = ordered_metals)
------
-library(forcats)
-# Updated labeller function
+# Create heatmap
 Metal_labeller <- function(variable, value) {
   return(label_value(value))  # Using label_value from forcats
 }
-library(ggplot2)
-# Create ggplot heatmap (if there are Nas go back to remove NAs in df)
-p <- ggplot(aes(x = Time, y = Taxa, fill = Correlation), data = df)
-p <- p + geom_tile() + scale_fill_gradient2(low = "#2C7BB6", mid = "white", high = "#D7191C") 
-p <- p + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
-p <- p + geom_text(aes(label = Significance), color = "black", size = 3) + labs(y = NULL, x = NULL, fill = method)
-p <- p + facet_grid(. ~ Metals, drop = TRUE, scale = "free", space = "free_x", labeller = Metal_labeller)
 
-#change name
-Adjusted_heatmap_diversityCLRadj <- p
-Adjusted_heatmap_deliverymodeCLR <- p
+p <- ggplot(aes(x = Time, y = Taxa, fill = Correlation), data = df) +
+  geom_tile() +
+  scale_fill_gradient2(low = "#2C7BB6", mid = "white", high = "#D7191C") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  geom_text(aes(label = Significance), color = "black", size = 3) +
+  labs(y = NULL, x = NULL, fill = method) +
+  facet_grid(. ~ Metals, scale = "free", space = "free_x", labeller = Metal_labeller)
 
-Heatmap_apha_indices <- p
+# Display heatmap
+print(p)
+
 # Save plot as a PDF
-pdf("Correlation_Metals_Microbiota.pdf", height = 8, width = 22)
+pdf("Correlation_Metals_diver21_03_2024.pdf", height = 8, width = 22)
 print(p)
 dev.off()
-
-#to keep
-print(Adjusted_heatmap_deliverymodeCLR)
-print(Adjusted_heatmap_diversityCLRadj)
-#testing
-print(Adjusted_heatmap_deliverymode)
-print(Adjusted_heatmap_sexpartlact)
-print(Heatmap_early_mature)
-print(Heatmap_apha_indices)
-
-# Assuming df is your dataframe this is a faceted barplot (another way to visualize the correlation values)
-faceted_barplot_bacteria <- ggplot(df, aes(x = Metals, y = Correlation, fill = Time)) +
-  geom_bar(stat = "identity", position = "dodge") +
-  facet_wrap(~ Taxa, scales = "free", nrow = 4, ncol = 5) +
-  labs(x = "Metals", y = "Correlation", fill = "Time") +
-  theme_minimal() +
-  theme(
-    panel.grid.major = element_line(color = "gray", linetype = "dashed"),
-    panel.grid.minor = element_blank(),
-    axis.text.x = element_text(angle = 90, hjust = 1, size = 6),  # Adjust the angle as needed
-    plot.title = element_text(size = 12),  # Adjust the title font size
-    legend.text = element_text(size = 8),  # Adjust the legend font size
-    strip.text = element_text(size = 8)  # Adjust the Taxa names font size
-  )
-
-print(faceted_barplot_indices)
-print(faceted_barplot_bacteria)
 
 
